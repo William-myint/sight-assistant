@@ -30,6 +30,12 @@
         <!-- Main Interface -->
         <main class="grid gap-6">
             
+            <!-- API Key Fallback (Visible only if ENV is missing) -->
+            <section id="keySection" class="hidden glass p-4 rounded-xl border border-amber-200 bg-amber-50">
+                <p class="text-sm text-amber-700 mb-2 font-medium">⚠️ API Key not found in environment. Please enter it manually:</p>
+                <input type="password" id="manualApiKey" placeholder="Enter Gemini API Key" class="w-full px-4 py-2 rounded-lg border border-amber-300 focus:ring-2 focus:ring-indigo-500 outline-none">
+            </section>
+
             <!-- Upload Section -->
             <section class="glass p-6 rounded-2xl shadow-xl border border-white">
                 <div class="flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-xl p-8 hover:border-indigo-400 transition-colors bg-slate-50/50" id="dropzone">
@@ -103,20 +109,32 @@
         const textDisplay = document.getElementById('textContent');
         const processBtn = document.getElementById('processBtn');
         const stopBtn = document.getElementById('stopBtn');
+        const manualApiKeyInput = document.getElementById('manualApiKey');
+        const keySection = document.getElementById('keySection');
 
         let currentAudio = null;
 
-        // Smart Routing Stack including requested Gemini 3 models
         const MODEL_PRIORITY = [
             'gemini-3-pro-preview',
             'gemini-3-flash-preview',
-            'gemini-2.0-flash-exp',
-            'gemini-2.0-flash-001',
-            'gemini-1.5-pro'
+            'gemini-2.5-pro-preview-tts'
         ];
 
-        // Environment key
-        const apiKey = typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_GEMINI_API_KEY : "";
+        // Improved ENV detection
+        let envKey = "";
+        try {
+            // This works in some environments like Vercel if injected correctly
+            envKey = (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_GEMINI_API_KEY) || "";
+        } catch (e) {}
+
+        // Show manual input if key is missing
+        if (!envKey) {
+            keySection.classList.remove('hidden');
+        }
+
+        function getActiveKey() {
+            return envKey || manualApiKeyInput.value.trim();
+        }
 
         fileInput.addEventListener('change', function(e) {
             const file = e.target.files[0];
@@ -152,13 +170,14 @@
         stopBtn.addEventListener('click', stopAudio);
 
         async function apiRequest(url, payload, retries = 2) {
-            if (!apiKey) {
-                throw new Error('API Key missing. Please ensure NEXT_PUBLIC_GEMINI_API_KEY is configured.');
+            const key = getActiveKey();
+            if (!key) {
+                throw new Error('API Key missing. Please provide a key to proceed.');
             }
 
             for (let i = 0; i < retries; i++) {
                 try {
-                    const response = await fetch(`${url}${url.includes('?') ? '&' : '?'}key=${apiKey}`, {
+                    const response = await fetch(`${url}${url.includes('?') ? '&' : '?'}key=${key}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
@@ -167,8 +186,6 @@
                     if (!response.ok) {
                         const error = await response.json();
                         const status = response.status;
-                        
-                        // If model isn't available for this API Key (403) or doesn't exist (404)
                         if (status === 404 || status === 403 || status === 400) {
                             throw new Error('MODEL_UNAVAILABLE');
                         }
@@ -186,6 +203,13 @@
         processBtn.addEventListener('click', async () => {
             const base64Image = preview.src.split(',')[1];
             if (!base64Image) return;
+
+            const key = getActiveKey();
+            if (!key) {
+                alert("Please enter your Gemini API key first.");
+                keySection.scrollIntoView({ behavior: 'smooth' });
+                return;
+            }
 
             statusSection.classList.remove('hidden');
             loading.classList.remove('hidden');
@@ -217,16 +241,16 @@
                         script = visionResult.candidates?.[0]?.content?.parts?.[0]?.text;
                         if (script) break;
                     } catch (e) {
-                        console.warn(`Routing: ${model} failed or restricted. Skipping...`);
+                        console.warn(`Routing: ${model} failed. Trying fallback...`);
                         continue;
                     }
                 }
 
-                if (!script) throw new Error("Could not reach any models in the stack. Check if your API Key supports these preview models.");
+                if (!script) throw new Error("Could not reach any models. Please check your API key and internet connection.");
 
                 textDisplay.innerText = script;
 
-                // 2. TTS - using the requested gemini-2.5-pro-preview-tts model
+                // 2. TTS
                 statusText.innerText = "Generating natural voice...";
                 const ttsModels = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'];
                 let ttsResult = null;
@@ -254,6 +278,8 @@
                     }
                 }
 
+                if (!ttsResult) throw new Error("TTS generation failed.");
+
                 const pcmData = ttsResult.candidates[0].content.parts[0].inlineData.data;
                 const audioBlob = pcmToWav(pcmData, 24000);
                 const audioUrl = URL.createObjectURL(audioBlob);
@@ -267,7 +293,7 @@
 
             } catch (error) {
                 console.error(error);
-                alert("Smart Routing Error: " + error.message);
+                alert("Error: " + error.message);
                 loading.classList.add('hidden');
             } finally {
                 processBtn.disabled = false;

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DocReader AI - Human Voice Assistant</title>
+    <title>DocReader AI - Smart Model Routing</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .gradient-bg { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); }
@@ -24,13 +24,13 @@
             <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 mb-2">
                 DocReader AI
             </h1>
-            <p class="text-slate-500">Transcribe and read document text aloud naturally.</p>
+            <p class="text-slate-500">Smart routing enabled. Automatically using the best available Gemini model.</p>
         </header>
 
         <!-- Main Interface -->
         <main class="grid gap-6">
             
-            <!-- Camera/Upload Section -->
+            <!-- Upload Section -->
             <section class="glass p-6 rounded-2xl shadow-xl border border-white">
                 <div class="flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-xl p-8 hover:border-indigo-400 transition-colors bg-slate-50/50" id="dropzone">
                     <input type="file" id="fileInput" accept="image/*" class="hidden">
@@ -45,12 +45,12 @@
                             </svg>
                         </div>
                         <button onclick="document.getElementById('fileInput').click()" class="bg-indigo-600 text-white px-6 py-2 rounded-full font-medium hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200">
-                            Capture or Upload Image
+                            Upload Document Image
                         </button>
                     </div>
                     <div id="actionButtons" class="hidden mt-4 flex gap-4">
                         <button id="processBtn" class="bg-emerald-500 text-white px-8 py-2 rounded-full font-medium hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-200">
-                            Read Text
+                            Read Smartly
                         </button>
                         <button onclick="resetUI()" class="text-slate-500 hover:text-slate-700 font-medium">Clear</button>
                     </div>
@@ -61,14 +61,14 @@
             <section id="statusSection" class="hidden glass p-6 rounded-2xl shadow-xl border border-white">
                 <div id="loading" class="hidden flex flex-col items-center py-6">
                     <div class="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
-                    <p class="text-slate-600 font-medium animate-pulse">Extracting text and preparing voice...</p>
+                    <p id="statusText" class="text-slate-600 font-medium animate-pulse">Initializing smart analysis...</p>
                 </div>
 
                 <div id="resultContent" class="hidden space-y-4">
                     <div class="flex items-center justify-between border-b border-slate-100 pb-4">
                         <div class="flex items-center gap-2">
                             <span class="flex h-3 w-3 rounded-full bg-emerald-500"></span>
-                            <h2 class="font-bold text-slate-800">Reading Now</h2>
+                            <h2 class="font-bold text-slate-800">Transcription Result</h2>
                         </div>
                         <div id="audioVisualizer" class="flex gap-1 items-end h-6">
                             <div class="w-1 bg-indigo-500 rounded-full h-2 animate-bounce"></div>
@@ -76,7 +76,9 @@
                             <div class="w-1 bg-indigo-600 rounded-full h-3 animate-bounce" style="animation-delay: 0.2s"></div>
                         </div>
                     </div>
-                    <p id="textContent" class="text-slate-700 leading-relaxed text-lg bg-white p-4 rounded-xl border border-slate-50"></p>
+                    <div class="bg-slate-900 rounded-xl p-4 overflow-x-auto">
+                        <p id="textContent" class="text-emerald-400 font-mono leading-relaxed whitespace-pre-wrap"></p>
+                    </div>
                     <div class="flex justify-center pt-4">
                          <button id="stopBtn" class="bg-rose-500 text-white px-6 py-2 rounded-full font-medium hover:bg-rose-600 shadow-lg shadow-rose-200">
                             Stop Playback
@@ -89,7 +91,6 @@
     </div>
 
     <script>
-        const apiKey = "AIzaSyD0znTBJUW1VvBUPw8Rp5IUyJGZuwU9Ndg"; // Managed by environment
         const fileInput = document.getElementById('fileInput');
         const preview = document.getElementById('imagePreview');
         const previewContainer = document.getElementById('previewContainer');
@@ -97,12 +98,24 @@
         const actionButtons = document.getElementById('actionButtons');
         const statusSection = document.getElementById('statusSection');
         const loading = document.getElementById('loading');
+        const statusText = document.getElementById('statusText');
         const resultContent = document.getElementById('resultContent');
         const textDisplay = document.getElementById('textContent');
         const processBtn = document.getElementById('processBtn');
         const stopBtn = document.getElementById('stopBtn');
 
         let currentAudio = null;
+
+        // Model hierarchy for smart routing
+        const MODEL_PRIORITY = [
+            'gemini-3-pro-preview',
+            'gemini-3-flash-preview',
+            'gemini-2.0-flash-exp',
+            'gemini-1.5-pro'
+        ];
+
+        // Environment key is provided by the execution environment or Vercel ENV
+        const apiKey = typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_GEMINI_API_KEY : "";
 
         fileInput.addEventListener('change', function(e) {
             const file = e.target.files[0];
@@ -137,19 +150,26 @@
 
         stopBtn.addEventListener('click', stopAudio);
 
-        async function apiRequest(url, payload, retries = 5) {
+        async function apiRequest(url, payload, retries = 3) {
+            if (!apiKey) {
+                throw new Error('API Key missing in environment variables. Please set NEXT_PUBLIC_GEMINI_API_KEY.');
+            }
+
             for (let i = 0; i < retries; i++) {
                 try {
-                    const response = await fetch(url, {
+                    const response = await fetch(`${url}${url.includes('?') ? '&' : '?'}key=${apiKey}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
-                    if (!response.ok) throw new Error('API request failed');
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.error?.message || 'API request failed');
+                    }
                     return await response.json();
                 } catch (err) {
                     if (i === retries - 1) throw err;
-                    await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
             }
         }
@@ -163,31 +183,44 @@
             resultContent.classList.add('hidden');
             processBtn.disabled = true;
 
+            const transcriptionPrompt = "Transcribe all visible text from this document. Output ONLY the raw text. No summary, no markdown, no descriptions.";
+
             try {
-                // 1. Extract Text from Image
-                const visionPrompt = `Transcribe all visible text from this document image. 
-                Do not provide a summary, do not explain the document, and do not identify the document type.
-                Only output the exact text found in the image.
-                Do not use any markdown formatting (like asterisks, hashtags, or bolding).`;
+                let script = "";
 
-                const visionResult = await apiRequest(
-                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
-                    {
-                        contents: [{
-                            parts: [
-                                { text: visionPrompt },
-                                { inlineData: { mimeType: "image/jpeg", data: base64Image } }
-                            ]
-                        }]
+                // SMART ROUTING LOOP
+                for (const model of MODEL_PRIORITY) {
+                    try {
+                        statusText.innerText = `Routing to ${model}...`;
+                        const visionResult = await apiRequest(
+                            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+                            {
+                                contents: [{
+                                    parts: [
+                                        { text: transcriptionPrompt },
+                                        { inlineData: { mimeType: "image/jpeg", data: base64Image } }
+                                    ]
+                                }]
+                            },
+                            1
+                        );
+                        
+                        script = visionResult.candidates?.[0]?.content?.parts?.[0]?.text;
+                        if (script) break;
+                    } catch (e) {
+                        console.warn(`Model ${model} unavailable, trying next...`);
+                        continue;
                     }
-                );
+                }
 
-                const script = visionResult.candidates?.[0]?.content?.parts?.[0]?.text || "No text could be extracted.";
+                if (!script) throw new Error("All smart routing paths failed.");
+
                 textDisplay.innerText = script;
 
-                // 2. Convert Script to Speech
+                // 2. TTS
+                statusText.innerText = "Generating natural voice...";
                 const ttsResult = await apiRequest(
-                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`,
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent`,
                     {
                         contents: [{ parts: [{ text: script }] }],
                         generationConfig: {
@@ -215,7 +248,7 @@
 
             } catch (error) {
                 console.error(error);
-                alert("Something went wrong. Please ensure the photo is clear.");
+                alert("Error: " + error.message);
                 loading.classList.add('hidden');
             } finally {
                 processBtn.disabled = false;
@@ -226,21 +259,19 @@
             const pcmBuffer = Uint8Array.from(atob(base64Pcm), c => c.charCodeAt(0)).buffer;
             const wavHeader = new ArrayBuffer(44);
             const view = new DataView(wavHeader);
-
-            view.setUint32(0, 0x52494646, false); // RIFF
+            view.setUint32(0, 0x52494646, false);
             view.setUint32(4, 36 + pcmBuffer.byteLength, true);
-            view.setUint32(8, 0x57415645, false); // WAVE
-            view.setUint32(12, 0x666d7420, false); // fmt 
-            view.setUint32(16, 16, true); // Subchunk1Size
-            view.setUint16(20, 1, true); // AudioFormat (PCM)
-            view.setUint16(22, 1, true); // NumChannels
+            view.setUint32(8, 0x57415645, false);
+            view.setUint32(12, 0x666d7420, false);
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
             view.setUint32(24, sampleRate, true);
-            view.setUint32(28, sampleRate * 2, true); // ByteRate
-            view.setUint16(32, 2, true); // BlockAlign
-            view.setUint16(34, 16, true); // BitsPerSample
-            view.setUint32(36, 0x64617461, false); // data
+            view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            view.setUint32(36, 0x64617461, false);
             view.setUint32(40, pcmBuffer.byteLength, true);
-
             return new Blob([wavHeader, pcmBuffer], { type: 'audio/wav' });
         }
     </script>

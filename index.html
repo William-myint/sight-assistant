@@ -106,15 +106,17 @@
 
         let currentAudio = null;
 
-        // Model hierarchy for smart routing
+        // Model hierarchy for smart routing including updated stable names
         const MODEL_PRIORITY = [
-            'gemini-3-pro-preview',
-            'gemini-3-flash-preview',
+            'gemini-2.0-flash-001',
             'gemini-2.0-flash-exp',
-            'gemini-1.5-pro'
+            'gemini-1.5-pro',
+            'gemini-1.5-flash',
+            'gemini-3-pro-preview',
+            'gemini-3-flash-preview'
         ];
 
-        // Environment key is provided by the execution environment or Vercel ENV
+        // Environment key
         const apiKey = typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_GEMINI_API_KEY : "";
 
         fileInput.addEventListener('change', function(e) {
@@ -152,7 +154,7 @@
 
         async function apiRequest(url, payload, retries = 3) {
             if (!apiKey) {
-                throw new Error('API Key missing in environment variables. Please set NEXT_PUBLIC_GEMINI_API_KEY.');
+                throw new Error('API Key missing. Please ensure NEXT_PUBLIC_GEMINI_API_KEY is configured.');
             }
 
             for (let i = 0; i < retries; i++) {
@@ -162,12 +164,18 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
+                    
                     if (!response.ok) {
                         const error = await response.json();
+                        // If model not found, return specialized error to skip to next model
+                        if (response.status === 404) {
+                            throw new Error('MODEL_NOT_FOUND');
+                        }
                         throw new Error(error.error?.message || 'API request failed');
                     }
                     return await response.json();
                 } catch (err) {
+                    if (err.message === 'MODEL_NOT_FOUND') throw err;
                     if (i === retries - 1) throw err;
                     await new Promise(resolve => setTimeout(resolve, 1000));
                 }
@@ -191,7 +199,7 @@
                 // SMART ROUTING LOOP
                 for (const model of MODEL_PRIORITY) {
                     try {
-                        statusText.innerText = `Routing to ${model}...`;
+                        statusText.innerText = `Connecting to ${model}...`;
                         const visionResult = await apiRequest(
                             `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
                             {
@@ -208,16 +216,16 @@
                         script = visionResult.candidates?.[0]?.content?.parts?.[0]?.text;
                         if (script) break;
                     } catch (e) {
-                        console.warn(`Model ${model} unavailable, trying next...`);
+                        console.warn(`Routing: ${model} failed, trying next model in stack.`);
                         continue;
                     }
                 }
 
-                if (!script) throw new Error("All smart routing paths failed.");
+                if (!script) throw new Error("Our intelligent routing stack could not reach a model. Please verify your API key access levels.");
 
                 textDisplay.innerText = script;
 
-                // 2. TTS
+                // 2. TTS - using the specific preview tts model
                 statusText.innerText = "Generating natural voice...";
                 const ttsResult = await apiRequest(
                     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent`,
@@ -230,8 +238,7 @@
                                     prebuiltVoiceConfig: { voiceName: "Aoede" }
                                 }
                             }
-                        },
-                        model: "gemini-2.5-flash-preview-tts"
+                        }
                     }
                 );
 
@@ -248,7 +255,7 @@
 
             } catch (error) {
                 console.error(error);
-                alert("Error: " + error.message);
+                alert("Smart Routing Error: " + error.message);
                 loading.classList.add('hidden');
             } finally {
                 processBtn.disabled = false;

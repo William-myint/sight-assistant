@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DocReader AI - Human Voice Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .gradient-bg { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); }
+        .glass { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); }
+        @keyframes pulse-ring { 0% { transform: scale(.33); opacity: 1; } 80%, 100% { opacity: 0; } }
+        .recording-pulse { position: relative; }
+        .recording-pulse::before {
+            content: ''; display: block; width: 300%; height: 300%; box-sizing: border-box; margin-left: -100%; margin-top: -100%;
+            border-radius: 45px; background-color: #ef4444; animation: pulse-ring 1.25s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-900">
+
+    <div class="max-w-4xl mx-auto px-4 py-8">
+        <!-- Header -->
+        <header class="text-center mb-10">
+            <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 mb-2">
+                DocReader AI
+            </h1>
+            <p class="text-slate-500">Transcribe and read document text aloud naturally.</p>
+        </header>
+
+        <!-- Main Interface -->
+        <main class="grid gap-6">
+            
+            <!-- Camera/Upload Section -->
+            <section class="glass p-6 rounded-2xl shadow-xl border border-white">
+                <div class="flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-xl p-8 hover:border-indigo-400 transition-colors bg-slate-50/50" id="dropzone">
+                    <input type="file" id="fileInput" accept="image/*" class="hidden">
+                    <div id="previewContainer" class="hidden mb-4 w-full max-w-sm">
+                        <img id="imagePreview" src="" alt="Preview" class="rounded-lg shadow-md w-full">
+                    </div>
+                    <div id="uploadPrompt" class="text-center">
+                        <div class="mb-4 text-indigo-500">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                        </div>
+                        <button onclick="document.getElementById('fileInput').click()" class="bg-indigo-600 text-white px-6 py-2 rounded-full font-medium hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200">
+                            Capture or Upload Image
+                        </button>
+                    </div>
+                    <div id="actionButtons" class="hidden mt-4 flex gap-4">
+                        <button id="processBtn" class="bg-emerald-500 text-white px-8 py-2 rounded-full font-medium hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-200">
+                            Read Text
+                        </button>
+                        <button onclick="resetUI()" class="text-slate-500 hover:text-slate-700 font-medium">Clear</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Status & Results -->
+            <section id="statusSection" class="hidden glass p-6 rounded-2xl shadow-xl border border-white">
+                <div id="loading" class="hidden flex flex-col items-center py-6">
+                    <div class="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4"></div>
+                    <p class="text-slate-600 font-medium animate-pulse">Extracting text and preparing voice...</p>
+                </div>
+
+                <div id="resultContent" class="hidden space-y-4">
+                    <div class="flex items-center justify-between border-b border-slate-100 pb-4">
+                        <div class="flex items-center gap-2">
+                            <span class="flex h-3 w-3 rounded-full bg-emerald-500"></span>
+                            <h2 class="font-bold text-slate-800">Reading Now</h2>
+                        </div>
+                        <div id="audioVisualizer" class="flex gap-1 items-end h-6">
+                            <div class="w-1 bg-indigo-500 rounded-full h-2 animate-bounce"></div>
+                            <div class="w-1 bg-indigo-400 rounded-full h-4 animate-bounce" style="animation-delay: 0.1s"></div>
+                            <div class="w-1 bg-indigo-600 rounded-full h-3 animate-bounce" style="animation-delay: 0.2s"></div>
+                        </div>
+                    </div>
+                    <p id="textContent" class="text-slate-700 leading-relaxed text-lg bg-white p-4 rounded-xl border border-slate-50"></p>
+                    <div class="flex justify-center pt-4">
+                         <button id="stopBtn" class="bg-rose-500 text-white px-6 py-2 rounded-full font-medium hover:bg-rose-600 shadow-lg shadow-rose-200">
+                            Stop Playback
+                         </button>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <script>
+        const apiKey = "AIzaSyD0znTBJUW1VvBUPw8Rp5IUyJGZuwU9Ndg"; // Managed by environment
+        const fileInput = document.getElementById('fileInput');
+        const preview = document.getElementById('imagePreview');
+        const previewContainer = document.getElementById('previewContainer');
+        const uploadPrompt = document.getElementById('uploadPrompt');
+        const actionButtons = document.getElementById('actionButtons');
+        const statusSection = document.getElementById('statusSection');
+        const loading = document.getElementById('loading');
+        const resultContent = document.getElementById('resultContent');
+        const textDisplay = document.getElementById('textContent');
+        const processBtn = document.getElementById('processBtn');
+        const stopBtn = document.getElementById('stopBtn');
+
+        let currentAudio = null;
+
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    preview.src = event.target.result;
+                    previewContainer.classList.remove('hidden');
+                    uploadPrompt.classList.add('hidden');
+                    actionButtons.classList.remove('hidden');
+                }
+                reader.readAsDataURL(file);
+            }
+        });
+
+        function resetUI() {
+            fileInput.value = '';
+            preview.src = '';
+            previewContainer.classList.add('hidden');
+            uploadPrompt.classList.remove('hidden');
+            actionButtons.classList.add('hidden');
+            statusSection.classList.add('hidden');
+            stopAudio();
+        }
+
+        function stopAudio() {
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio = null;
+            }
+        }
+
+        stopBtn.addEventListener('click', stopAudio);
+
+        async function apiRequest(url, payload, retries = 5) {
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!response.ok) throw new Error('API request failed');
+                    return await response.json();
+                } catch (err) {
+                    if (i === retries - 1) throw err;
+                    await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+                }
+            }
+        }
+
+        processBtn.addEventListener('click', async () => {
+            const base64Image = preview.src.split(',')[1];
+            if (!base64Image) return;
+
+            statusSection.classList.remove('hidden');
+            loading.classList.remove('hidden');
+            resultContent.classList.add('hidden');
+            processBtn.disabled = true;
+
+            try {
+                // 1. Extract Text from Image
+                const visionPrompt = `Transcribe all visible text from this document image. 
+                Do not provide a summary, do not explain the document, and do not identify the document type.
+                Only output the exact text found in the image.
+                Do not use any markdown formatting (like asterisks, hashtags, or bolding).`;
+
+                const visionResult = await apiRequest(
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+                    {
+                        contents: [{
+                            parts: [
+                                { text: visionPrompt },
+                                { inlineData: { mimeType: "image/jpeg", data: base64Image } }
+                            ]
+                        }]
+                    }
+                );
+
+                const script = visionResult.candidates?.[0]?.content?.parts?.[0]?.text || "No text could be extracted.";
+                textDisplay.innerText = script;
+
+                // 2. Convert Script to Speech
+                const ttsResult = await apiRequest(
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`,
+                    {
+                        contents: [{ parts: [{ text: script }] }],
+                        generationConfig: {
+                            responseModalities: ["AUDIO"],
+                            speechConfig: {
+                                voiceConfig: {
+                                    prebuiltVoiceConfig: { voiceName: "Aoede" }
+                                }
+                            }
+                        },
+                        model: "gemini-2.5-flash-preview-tts"
+                    }
+                );
+
+                const pcmData = ttsResult.candidates[0].content.parts[0].inlineData.data;
+                const audioBlob = pcmToWav(pcmData, 24000);
+                const audioUrl = URL.createObjectURL(audioBlob);
+
+                loading.classList.add('hidden');
+                resultContent.classList.remove('hidden');
+
+                stopAudio();
+                currentAudio = new Audio(audioUrl);
+                currentAudio.play();
+
+            } catch (error) {
+                console.error(error);
+                alert("Something went wrong. Please ensure the photo is clear.");
+                loading.classList.add('hidden');
+            } finally {
+                processBtn.disabled = false;
+            }
+        });
+
+        function pcmToWav(base64Pcm, sampleRate) {
+            const pcmBuffer = Uint8Array.from(atob(base64Pcm), c => c.charCodeAt(0)).buffer;
+            const wavHeader = new ArrayBuffer(44);
+            const view = new DataView(wavHeader);
+
+            view.setUint32(0, 0x52494646, false); // RIFF
+            view.setUint32(4, 36 + pcmBuffer.byteLength, true);
+            view.setUint32(8, 0x57415645, false); // WAVE
+            view.setUint32(12, 0x666d7420, false); // fmt 
+            view.setUint32(16, 16, true); // Subchunk1Size
+            view.setUint16(20, 1, true); // AudioFormat (PCM)
+            view.setUint16(22, 1, true); // NumChannels
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true); // ByteRate
+            view.setUint16(32, 2, true); // BlockAlign
+            view.setUint16(34, 16, true); // BitsPerSample
+            view.setUint32(36, 0x64617461, false); // data
+            view.setUint32(40, pcmBuffer.byteLength, true);
+
+            return new Blob([wavHeader, pcmBuffer], { type: 'audio/wav' });
+        }
+    </script>
+</body>
+</html>

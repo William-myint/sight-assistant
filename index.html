@@ -24,7 +24,7 @@
             <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600 mb-2">
                 DocReader AI
             </h1>
-            <p class="text-slate-500">Smart routing enabled. Automatically using the best available Gemini model.</p>
+            <p class="text-slate-500">Smart routing enabled. Prioritizing Gemini 3 with automated fallbacks.</p>
         </header>
 
         <!-- Main Interface -->
@@ -106,14 +106,13 @@
 
         let currentAudio = null;
 
-        // Model hierarchy for smart routing including updated stable names
+        // Smart Routing Stack including requested Gemini 3 models
         const MODEL_PRIORITY = [
-            'gemini-2.0-flash-001',
-            'gemini-2.0-flash-exp',
-            'gemini-1.5-pro',
-            'gemini-1.5-flash',
             'gemini-3-pro-preview',
-            'gemini-3-flash-preview'
+            'gemini-3-flash-preview',
+            'gemini-2.0-flash-exp',
+            'gemini-2.0-flash-001',
+            'gemini-1.5-pro'
         ];
 
         // Environment key
@@ -152,7 +151,7 @@
 
         stopBtn.addEventListener('click', stopAudio);
 
-        async function apiRequest(url, payload, retries = 3) {
+        async function apiRequest(url, payload, retries = 2) {
             if (!apiKey) {
                 throw new Error('API Key missing. Please ensure NEXT_PUBLIC_GEMINI_API_KEY is configured.');
             }
@@ -167,17 +166,19 @@
                     
                     if (!response.ok) {
                         const error = await response.json();
-                        // If model not found, return specialized error to skip to next model
-                        if (response.status === 404) {
-                            throw new Error('MODEL_NOT_FOUND');
+                        const status = response.status;
+                        
+                        // If model isn't available for this API Key (403) or doesn't exist (404)
+                        if (status === 404 || status === 403 || status === 400) {
+                            throw new Error('MODEL_UNAVAILABLE');
                         }
                         throw new Error(error.error?.message || 'API request failed');
                     }
                     return await response.json();
                 } catch (err) {
-                    if (err.message === 'MODEL_NOT_FOUND') throw err;
+                    if (err.message === 'MODEL_UNAVAILABLE') throw err;
                     if (i === retries - 1) throw err;
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await new Promise(resolve => setTimeout(resolve, 500));
                 }
             }
         }
@@ -199,7 +200,7 @@
                 // SMART ROUTING LOOP
                 for (const model of MODEL_PRIORITY) {
                     try {
-                        statusText.innerText = `Connecting to ${model}...`;
+                        statusText.innerText = `Attempting ${model}...`;
                         const visionResult = await apiRequest(
                             `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
                             {
@@ -216,31 +217,42 @@
                         script = visionResult.candidates?.[0]?.content?.parts?.[0]?.text;
                         if (script) break;
                     } catch (e) {
-                        console.warn(`Routing: ${model} failed, trying next model in stack.`);
+                        console.warn(`Routing: ${model} failed or restricted. Skipping...`);
                         continue;
                     }
                 }
 
-                if (!script) throw new Error("Our intelligent routing stack could not reach a model. Please verify your API key access levels.");
+                if (!script) throw new Error("Could not reach any models in the stack. Check if your API Key supports these preview models.");
 
                 textDisplay.innerText = script;
 
-                // 2. TTS - using the specific preview tts model
+                // 2. TTS - using the requested gemini-2.5-pro-preview-tts model
                 statusText.innerText = "Generating natural voice...";
-                const ttsResult = await apiRequest(
-                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent`,
-                    {
-                        contents: [{ parts: [{ text: script }] }],
-                        generationConfig: {
-                            responseModalities: ["AUDIO"],
-                            speechConfig: {
-                                voiceConfig: {
-                                    prebuiltVoiceConfig: { voiceName: "Aoede" }
+                const ttsModels = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'];
+                let ttsResult = null;
+
+                for (const ttsModel of ttsModels) {
+                    try {
+                        ttsResult = await apiRequest(
+                            `https://generativelanguage.googleapis.com/v1beta/models/${ttsModel}:generateContent`,
+                            {
+                                contents: [{ parts: [{ text: script }] }],
+                                generationConfig: {
+                                    responseModalities: ["AUDIO"],
+                                    speechConfig: {
+                                        voiceConfig: {
+                                            prebuiltVoiceConfig: { voiceName: "Aoede" }
+                                        }
+                                    }
                                 }
-                            }
-                        }
+                            },
+                            1
+                        );
+                        if (ttsResult) break;
+                    } catch (e) {
+                        continue;
                     }
-                );
+                }
 
                 const pcmData = ttsResult.candidates[0].content.parts[0].inlineData.data;
                 const audioBlob = pcmToWav(pcmData, 24000);
